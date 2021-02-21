@@ -1,10 +1,26 @@
+#define LEFT    1
+#define RIGHT   2
+#define SIDE    LEFT
+
+#define CPU_ESP8266 1
+#define CPU_ESP32   2
+
+#if SIDE == LEFT
+  #define CPU     CPU_ESP32
+#else
+  #define CPU     CPU_ESP8266
+#endif
+
 #include <arduinoFFT.h>
 #include <ArduinoJson.h>
 #include <FastLED.h>
-//#include <ESP8266WiFi.h>
-//#include <ESP8266mDNS.h>
-#include <WiFi.h>
-#include <ESPmDNS.h>
+#if CPU == CPU_ESP32
+  #include <WiFi.h>
+  #include <ESPmDNS.h>
+#else
+  #include <ESP8266WiFi.h>
+  #include <ESP8266mDNS.h>
+#endif
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
 #include <PubSubClient.h>
@@ -12,14 +28,27 @@
 #include "secret.h"
 #include "tables.h"
 
-#define IP                216
-#define MQTT_CLIENT       "ESP32Client_LED"
+#if SIDE == LEFT
+  #define IP                216
+  #define MQTT_CLIENT       "ESPClient_LED_L"
+#else
+  #define IP                215
+  #define MQTT_CLIENT       "ESPClient_LED_R"
+#endif
 #define LED_MATRIX        "global/led"
 #define STATUS            "global/debug"
-//#define BUILTIN_LED       2 // Wemos D1 mini
-#define LED_ON            HIGH
-#define LED_OFF           LOW
-
+#if CPU == CPU_ESP32
+  #define LED_ON            HIGH
+  #define LED_OFF           LOW
+  #define MAX_FRAMES        32
+  #define DATA_PIN          22
+#else
+  #define LED_ON            LOW
+  #define LED_OFF           HIGH
+  #define BUILTIN_LED       2 // Wemos D1 mini
+  #define MAX_FRAMES        20
+  #define DATA_PIN          5
+#endif
 #define SAMPLES           1024          // Must be a power of 2
 #define SAMPLING_FREQ     40000         // Hz, must be 40000 or less due to ADC conversion time. Determines maximum frequency that can be analysed by the FFT Fmax=sampleF/2.
 #define AMPLITUDE         1000          // Depending on your audio source level, you may need to alter this value. Can be used as a 'sensitivity' control.
@@ -51,8 +80,6 @@ const int BRIGHTNESS_SETTINGS[3] = {5, 70, 200};  // 3 Integer array for 3 brigh
 #define FRAME_WIDTH       8
 #define FRAME_HEIGHT      8
 #define NUM_LEDS          FRAME_WIDTH*FRAME_HEIGHT //64
-#define MAX_FRAMES        32
-#define DATA_PIN          22
 #define COLOR_ORDER       GRB //BRG
 #define CHIPSET           WS2812B
 #define BRIGHTNESS        255
@@ -73,6 +100,9 @@ const int BRIGHTNESS_SETTINGS[3] = {5, 70, 200};  // 3 Integer array for 3 brigh
 #define IDLE              0
 #define LOAD              1
 #define PROCESS           2
+
+#define GREEN             1
+#define RED               2
 
 #define FONTWIDTH         5
 #define FONTHEIGHT        7
@@ -121,11 +151,15 @@ struct StructSequence{
 struct StructSequence Sequence;
 struct TextFrame textframe;
 
-int mode = SPECTRUM0;
+int mode = FIRE;
 int step = IDLE;
 int pixStackIndex = 0;
 int sensorPin = A0;    // select the input pin for the micro
 int autocolor = 0;
+
+int eye_color = GREEN;
+int eye_blink = 0;
+int pup_x = 2, pup_y = 4;
 
 // Sampling and FFT stuff
 unsigned int sampling_period_us;
@@ -392,6 +426,19 @@ void callback(String topic, byte* message, unsigned int length) {
     else if (payload.startsWith("FIRE")){
       mode = FIRE;
     }
+    else if (payload.startsWith("BLINK")){
+      eye_blink = 1;
+    }
+    else if (payload.startsWith("RED")){
+      eye_color = RED;
+    }
+    else if (payload.startsWith("GREEN")){
+      eye_color = GREEN;
+    }
+    else if (payload.startsWith("PUPIL")){
+      pup_x = split(payload, ',', 1).toInt();
+      pup_y = split(payload, ',', 2).toInt();
+    }
     else if (payload.startsWith("SET")){
       //Serial.println("SET pixel");
       mode = PICTURE;
@@ -645,7 +692,7 @@ void processScrollingText(){
 }
 
 /* Set prerecorded frame and wait */
-void setFrame(int index, int delay, Color col){
+void setFrame(int index, int delay, Color col, int pupille_x, int pupille_y){
   FastLED.clear();
   for(int i=0;i<8;i++){
     for(int j=0;j<8;j++){
@@ -654,54 +701,225 @@ void setFrame(int index, int delay, Color col){
     }
   }
   // Pupille
-  leds[ XY(2, 4)] = CRGB(0, 0, 0);
-  leds[ XY(2, 5)] = CRGB(0, 0, 0);
-  leds[ XY(3, 4)] = CRGB(0, 0, 0);
-  leds[ XY(3, 5)] = CRGB(0, 0, 0);
+  leds[ XY(pupille_x,   pupille_y)] = CRGB(0, 0, 0);
+  leds[ XY(pupille_x,   pupille_y+1)] = CRGB(0, 0, 0);
+  leds[ XY(pupille_x+1, pupille_y)] = CRGB(0, 0, 0);
+  leds[ XY(pupille_x+1, pupille_y+1)] = CRGB(0, 0, 0);
   FastLED.show();
   nonBlockingDelay(delay);
 }
 
-void processEye(){
+/*
+// Autonomous eye management (overridden by MQTT commands)
+void processRandomEyes(){
+  static int blink_timer = 0;
+  static unsigned long lastBlinkCall = millis();
+  static int switch_timer = 0;
+  static unsigned long lastSwitchCall = millis();
+
+  if(millis() > lastBlinkCall + blink_timer){
+    blink_timer = random(1, 5)*1000;
+    lastBlinkCall = millis();
+    // start blink here
+    eye_blink = 1;
+  }
+  else if(millis() > lastSwitchCall + switch_timer){
+    switch_timer = random(10, 20)*1000;
+    lastSwitchCall = millis();
+    // switch color
+    if(eye_color == GREEN) eye_color = RED;
+    else eye_color = GREEN;
+  }
+}
+*/
+
+/*
+void processPupil(int *p_x, int *p_y){
+  static unsigned long lastPupilCall = millis();
+  static int pupil_timer = 0;
+
+  if(millis() > lastPupilCall + pupil_timer){
+    pupil_timer = random(1, 5)*1000;
+    lastPupilCall = millis();
+    if(*p_x == 2) *p_x = 3;
+    else *p_x = 2;
+  }
+}
+*/
+
+void processEyes(){
+  static int last_eye_color = RED;
   int greenBlinkIndex[] = {1, 2, 3, 4, 3, 2, 1};
+#if SIDE == LEFT
   int redBlinkIndex[] = {11, 12, 13, 14, 13, 12, 11};
+#else
+  int redBlinkIndex[] = {6, 7, 8, 9, 8, 7, 6};
+#endif
   Color gc = {0, 255, 0};
   Color rc = {255, 0, 0};
-
-  // Green eye open
-  setFrame(0, 1000, gc);
-  // Blink green eye
-  for(int frame=0;frame < sizeof(greenBlinkIndex)/sizeof(greenBlinkIndex[0]);frame++){    
-    setFrame(greenBlinkIndex[frame], 50, gc);
-  }
-  // Green eye open
-  setFrame(0, 2000, gc);
   
-  // Close green eye
-  for(int frame=1;frame <= 4;frame++){    
-    setFrame(frame, 50, gc);
+//  processRandomEyes();
+//  processPupil(&pup_x, &pup_y);
+
+  // Blink green eye
+  if( (eye_blink == 1) && (eye_color == GREEN) ){
+    // Blink green eye
+    for(int frame=0;frame < sizeof(greenBlinkIndex)/sizeof(greenBlinkIndex[0]);frame++){    
+      setFrame(greenBlinkIndex[frame], 50, gc, pup_x, pup_y);
+    }
+    // Green eye open
+    setFrame(0, 1, gc, pup_x, pup_y);
+    eye_blink = 0;
   }
-  // Open red eye
-  for(int frame=14;frame >10;frame--){    
-    setFrame(frame, 50, rc);
-  }
-  // Red eye open
-  setFrame(10, 2000, rc);
   // Blink red eye
-  for(int frame=0;frame < sizeof(redBlinkIndex)/sizeof(redBlinkIndex[0]);frame++){    
-    setFrame(redBlinkIndex[frame], 50, rc);
+  else if( (eye_blink == 1) && (eye_color == RED) ){
+    // Blink red eye
+    for(int frame=0;frame < sizeof(redBlinkIndex)/sizeof(redBlinkIndex[0]);frame++){    
+      setFrame(redBlinkIndex[frame], 50, rc, pup_x, pup_y);
+    }
+    // Red eye open
+#if SIDE == LEFT
+    setFrame(10, 1, rc, pup_x, pup_y);
+#else
+    setFrame(5, 1, rc, pup_x, pup_y);
+#endif
+    eye_blink = 0;
   }
-  setFrame(10, 2000, rc);
-  // Close red eye
-  for(int frame=10;frame>=14;frame++){    
-    setFrame(frame, 50, rc);
+  // Switch eye color
+  else if(last_eye_color != eye_color){
+    // blink from red to green
+    if(eye_color == GREEN){
+      // Close red eye
+#if SIDE == LEFT
+      for(int frame=10;frame>=14;frame++){    
+#else
+      for(int frame=5;frame>=8;frame++){    
+#endif
+        setFrame(frame, 50, rc, pup_x, pup_y);
+      }
+      // Open green eye
+      for(int frame=4;frame >= 1;frame--){    
+        setFrame(frame, 50, gc, pup_x, pup_y);
+      }
+      // Green eye open
+      setFrame(0, 1, gc, pup_x, pup_y);
+    }
+    // blink from green to red
+    else{
+      // Close green eye
+      for(int frame=1;frame <= 4;frame++){    
+        setFrame(frame, 50, gc, pup_x, pup_y);
+      }
+      // Open red eye
+#if SIDE == LEFT
+      for(int frame=14;frame >10;frame--){    
+#else
+      for(int frame=8;frame >5;frame--){    
+#endif
+        setFrame(frame, 50, rc, pup_x, pup_y);
+      }
+      // Red eye open
+#if SIDE == LEFT
+      setFrame(10, 1, rc, pup_x, pup_y);
+#else
+      setFrame(5, 1, rc, pup_x, pup_y);
+#endif
+    }
   }
-  // Open green eye
-  for(int frame=4;frame >= 1;frame--){    
-    setFrame(frame, 50, gc);
+
+  last_eye_color = eye_color;
+}
+
+void setup() { 
+  Serial.begin(115200);
+  pinMode(BUILTIN_LED, OUTPUT);
+  digitalWrite(BUILTIN_LED, LED_ON);
+  
+  if(!setup_wifi()){
+    Serial.println("Reset due to missing wifi connection");
+    ESP.restart();
+  }
+
+  digitalWrite(BUILTIN_LED, LED_OFF);
+
+  ArduinoOTA.onStart([]() {
+      Serial.println("Start");
+  });
+  ArduinoOTA.onEnd([]() {
+      Serial.println("\nEnd");
+  });
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+      Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+  });
+  ArduinoOTA.onError([](ota_error_t error) {
+      Serial.printf("Error[%u]: ", error);
+      if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+      else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+      else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+      else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+      else if (error == OTA_END_ERROR) Serial.println("End Failed");
+      //ESP.restart();
+  });
+  ArduinoOTA.begin();
+  Serial.println("Ready");
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+
+  client.setServer(mqtt_server, 1883);
+  client.setCallback(callback);
+
+  FastLED.addLeds<CHIPSET, DATA_PIN, COLOR_ORDER>(leds, NUM_LEDS);
+  FastLED.setMaxPowerInVoltsAndMilliamps(LED_VOLTS, MAX_MILLIAMPS);
+  FastLED.setBrightness(BRIGHTNESS_SETTINGS[1]);
+  FastLED.setBrightness(BRIGHTNESS);
+  /* Set a black-body radiation palette
+     This comes from FastLED */
+  gPal = HeatColors_p;
+  sampling_period_us = round(1000000 * (1.0 / SAMPLING_FREQ));
+  randomSeed(10); // Generate pseudo random numbers
+}
+
+void loop() {
+  ArduinoOTA.handle();
+
+  if (!client.connected()) {
+          reconnect();
+  }
+  if(!client.loop())
+      client.connect(MQTT_CLIENT);
+
+  /* Process loop */
+  //Serial.print(mode);Serial.print(" -- ");Serial.println(step);
+  if(mode == SEQUENCE && step == PROCESS){
+    //Serial.println("Sequence");
+    processFrames();
+  }
+  else if (mode == TEXTMODE){
+    processText();
+  }
+  else if (mode == TEXTMODESCROLL){
+    processScrollingText();
+  }
+  /*else if( (mode >= SPECTRUM0) && (mode <= SPECTRUM5) ){
+    //processSpectrum();
+  }*/
+  else if (mode == EYE){
+    processEyes();
+  }
+  else if(mode == FIRE){
+    //Fire2018_2();
+    random16_add_entropy( random(10) ); // We chew a lot of entropy
+    Fireplace();
+    FastLED.show();
+    FastLED.delay(FPS_DELAY); //
+  }
+  else{
+    //Serial.print(mode);Serial.print(" -- ");Serial.println(step);
+    nonBlockingDelay(100);
   }
 }
 
+#if CPU == CPU_ESP32
 void setBin(int value){
   int maxval=0;
   for(int i=7;i>=0;i--){
@@ -857,94 +1075,6 @@ void processSpectrum(){
   FastLED.show();
 }
 
-void setup() { 
-  Serial.begin(115200);
-  pinMode(BUILTIN_LED, OUTPUT);
-  digitalWrite(BUILTIN_LED, LED_ON);
-  
-  if(!setup_wifi()){
-    Serial.println("Reset due to missing wifi connection");
-    ESP.restart();
-  }
-
-  digitalWrite(BUILTIN_LED, LED_OFF);
-
-  ArduinoOTA.onStart([]() {
-      Serial.println("Start");
-  });
-  ArduinoOTA.onEnd([]() {
-      Serial.println("\nEnd");
-  });
-  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-      Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
-  });
-  ArduinoOTA.onError([](ota_error_t error) {
-      Serial.printf("Error[%u]: ", error);
-      if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
-      else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
-      else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
-      else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
-      else if (error == OTA_END_ERROR) Serial.println("End Failed");
-      //ESP.restart();
-  });
-  ArduinoOTA.begin();
-  Serial.println("Ready");
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
-
-  client.setServer(mqtt_server, 1883);
-  client.setCallback(callback);
-
-  FastLED.addLeds<CHIPSET, DATA_PIN, COLOR_ORDER>(leds, NUM_LEDS);
-  FastLED.setMaxPowerInVoltsAndMilliamps(LED_VOLTS, MAX_MILLIAMPS);
-  FastLED.setBrightness(BRIGHTNESS_SETTINGS[1]);
-  FastLED.setBrightness(BRIGHTNESS);
-  /* Set a black-body radiation palette
-     This comes from FastLED */
-  gPal = HeatColors_p;
-  sampling_period_us = round(1000000 * (1.0 / SAMPLING_FREQ));
-}
-
-void loop() {
-  ArduinoOTA.handle();
-
-  if (!client.connected()) {
-          reconnect();
-  }
-  if(!client.loop())
-      client.connect(MQTT_CLIENT);
-
-  /* Process loop */
-  //Serial.print(mode);Serial.print(" -- ");Serial.println(step);
-  if(mode == SEQUENCE && step == PROCESS){
-    //Serial.println("Sequence");
-    processFrames();
-  }
-  else if (mode == TEXTMODE){
-    processText();
-  }
-  else if (mode == TEXTMODESCROLL){
-    processScrollingText();
-  }
-  else if( (mode >= SPECTRUM0) && (mode <= SPECTRUM5) ){
-    processSpectrum();
-  }
-  else if (mode == EYE){
-    processEye();
-  }
-  else if(mode == FIRE){
-    //Fire2018_2();
-    random16_add_entropy( random(10) ); // We chew a lot of entropy
-    Fireplace();
-    FastLED.show();
-    FastLED.delay(FPS_DELAY); //
-  }
-  else{
-    //Serial.print(mode);Serial.print(" -- ");Serial.println(step);
-    nonBlockingDelay(100);
-  }
-}
-
 // PATTERNS BELOW //
 
 void rainbowBars(int band, int barHeight) {
@@ -1021,6 +1151,7 @@ void waterfall(int band) {
     }
   }
 }
+#endif
 
 void Fireplace () {
   static unsigned int spark[FRAME_WIDTH]; // base heat

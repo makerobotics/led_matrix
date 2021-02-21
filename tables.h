@@ -2,7 +2,7 @@
 static const uint8_t blinkImg[][8] = {    // Eye animation frames
     // The NICE (green) eye, both left and right
     { B00111100,         // Fully open nice/green eye
-        B01111110,
+        B01111110, // 0
         B11111111,
         B11111111,
         B11111111,
@@ -10,7 +10,7 @@ static const uint8_t blinkImg[][8] = {    // Eye animation frames
         B01111110,
         B00111100 },
     { B00000000,
-        B01111110,
+        B01111110, // 1
         B11111111,
         B11111111,
         B11111111,
@@ -18,7 +18,7 @@ static const uint8_t blinkImg[][8] = {    // Eye animation frames
         B01111110,
         B00111100 },
     { B00000000,
-        B00000000,
+        B00000000, // 2
         B00111100,
         B11111111,
         B11111111,
@@ -26,7 +26,7 @@ static const uint8_t blinkImg[][8] = {    // Eye animation frames
         B00111100,
         B00000000 },
     { B00000000,
-        B00000000,
+        B00000000, // 3
         B00000000,
         B00111100,
         B11111111,
@@ -34,7 +34,7 @@ static const uint8_t blinkImg[][8] = {    // Eye animation frames
         B00011000,
         B00000000 },
     { B00000000,         // Fully closed nice/green eye
-        B00000000,
+        B00000000, // 4
         B00000000,
         B00000000,
         B10000001,
@@ -44,7 +44,7 @@ static const uint8_t blinkImg[][8] = {    // Eye animation frames
 
     // The EVIL (red) eye, left
     { B00000000,         // Fully open evil/red eye
-        B11000000,
+        B11000000, // 5
         B11111000,
         B01111111,
         B01111111,
@@ -52,7 +52,7 @@ static const uint8_t blinkImg[][8] = {    // Eye animation frames
         B00111110,
         B00011100 },
     { B00000000,
-        B00000000,
+        B00000000, // 6
         B11111000,
         B01111111,
         B01111111,
@@ -60,7 +60,7 @@ static const uint8_t blinkImg[][8] = {    // Eye animation frames
         B00111110,
         B00011100 },
     { B00000000,
-        B00000000,
+        B00000000, // 7
         B11111000,
         B01111111,
         B01111111,
@@ -68,7 +68,7 @@ static const uint8_t blinkImg[][8] = {    // Eye animation frames
         B00111110,
         B00000000 },
     { B00000000,
-        B00000000,
+        B00000000, // 8
         B00000000,
         B01111111,
         B01111111,
@@ -76,7 +76,7 @@ static const uint8_t blinkImg[][8] = {    // Eye animation frames
         B00000000,
         B00000000 },
     { B00000000,         // Fully closed evil/red eye
-        B00000000,
+        B00000000, // 9
         B00000000,
         B00000000,
         B01111111,
@@ -85,7 +85,7 @@ static const uint8_t blinkImg[][8] = {    // Eye animation frames
         B00000000 },
     // The EVIL (red) eye, right
     { B00000000,         // Fully open evil/red eye
-        B00000011,
+        B00000011, // 10
         B00011111,
         B11111110,
         B11111110,
@@ -93,7 +93,7 @@ static const uint8_t blinkImg[][8] = {    // Eye animation frames
         B01111100,
         B00111000 },
     { B00000000,
-        B00000000,
+        B00000000, // 11
         B00011111,
         B11111110,
         B11111110,
@@ -101,7 +101,7 @@ static const uint8_t blinkImg[][8] = {    // Eye animation frames
         B01111100,
         B00111000 },
     { B00000000,
-        B00000000,
+        B00000000, // 12
         B00011111,
         B11111110,
         B11111110,
@@ -109,7 +109,7 @@ static const uint8_t blinkImg[][8] = {    // Eye animation frames
         B01111100,
         B00000000 },
     { B00000000,
-        B00000000,
+        B00000000, // 13
         B00000000,
         B11111110,
         B11111110,
@@ -117,7 +117,7 @@ static const uint8_t blinkImg[][8] = {    // Eye animation frames
         B00000000,
         B00000000 },
     { B00000000,         // Fully closed evil/red eye
-        B00000000,
+        B00000000, // 14
         B00000000,
         B00000000,
         B11111110,
