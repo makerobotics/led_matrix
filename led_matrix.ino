@@ -78,14 +78,15 @@ const int BRIGHTNESS_SETTINGS[3] = {5, 70, 200};  // 3 Integer array for 3 brigh
 #define PICTURE           2
 #define TEXTMODE          3
 #define TEXTMODESCROLL    4
-#define SPECTRUM0         50
-#define SPECTRUM1         51
-#define SPECTRUM2         52
-#define SPECTRUM3         53
-#define SPECTRUM4         54
-#define SPECTRUM5         55
-#define EYE               6
-#define FIRE              7
+#define SPECTRUM0         5
+#define SPECTRUM1         6
+#define SPECTRUM2         7
+#define SPECTRUM3         8
+#define SPECTRUM4         9
+#define SPECTRUM5         10
+#define FIRE              11
+#define EYE               12
+#define MAXMODE           13 // to be updated as last mode number
 
 #define IDLE              0
 #define LOAD              1
@@ -146,6 +147,8 @@ int pixStackIndex = 0;
 int sensorPin = A0;    // select the input pin for the micro
 int autocolor = 0;
 
+int wifiActive = 0;
+
 int debug = 0;
 
 int eye_color = GREEN;
@@ -153,9 +156,7 @@ int eye_blink = 0;
 int pup_index = 0;
 int last_pup_index = 0;
 
-// Button stuff
-int buttonPushCounter = 0;
-bool autoChangePatterns = false;
+// Button
 EasyButton modeBtn(BTN_PIN);
 
 // Sampling and FFT stuff
@@ -322,14 +323,38 @@ int setup_wifi() {
     }
     if(WiFi.status() == WL_CONNECTED){
       res = true;
+      wifiActive = 1;
       Serial.println("");
       Serial.print("WiFi connected - ESP IP address: ");
       Serial.println(WiFi.localIP());
     }
     else{
-      Serial.print("WiFi connection failed");
+      Serial.println("WiFi connection failed");
     }
     return res;
+}
+
+void holdWifi(){
+  if(wifiActive == 1){
+    // turn off wifi
+    WiFi.disconnect();
+    WiFi.mode(WIFI_OFF);
+    wifiActive = 0;
+    Serial.println("WiFi connection disconnected");
+  }
+}
+
+void restartWifi(){
+  if(wifiActive == 0){
+    // turn on wifi
+    Serial.println("WiFi connection restarting...");
+    WiFi.disconnect();
+    WiFi.mode(WIFI_STA);
+    //WiFi.reconnect();
+    WiFi.begin(ssid, password);
+    wifiActive = 1;
+    Serial.println("WiFi connection reconnected");
+  }
 }
 
 // This functions reconnects your ESP8266 to your MQTT broker
@@ -388,33 +413,35 @@ void callback(String topic, byte* message, unsigned int length) {
     }
     else if (payload.startsWith("SPECTRUM0")){
       mode = SPECTRUM0;
-      buttonPushCounter = 0;
+      holdWifi();
     }
     else if (payload.startsWith("SPECTRUM1")){
       mode = SPECTRUM1;
-      buttonPushCounter = 1;
+      holdWifi();
     }
     else if (payload.startsWith("SPECTRUM2")){
       mode = SPECTRUM2;
-      buttonPushCounter = 2;
+      holdWifi();
     }
     else if (payload.startsWith("SPECTRUM3")){
       mode = SPECTRUM3;
-      buttonPushCounter = 3;
+      holdWifi();
     }
     else if (payload.startsWith("SPECTRUM4")){
       mode = SPECTRUM4;
-      buttonPushCounter = 4;
+      holdWifi();
     }
     else if (payload.startsWith("SPECTRUM5")){
       mode = SPECTRUM5;
-      buttonPushCounter = 5;
+      holdWifi();
     }
     else if (payload.startsWith("EYE")){
       mode = EYE;
+      restartWifi();
     }
     else if (payload.startsWith("FIRE")){
       mode = FIRE;
+      restartWifi();
     }
     else if (payload.startsWith("BLINK")){
       eye_blink = 1;
@@ -808,19 +835,22 @@ void processEyes(){
   }
   last_eye_color = eye_color;
 
-  Serial.print("Mode: " + String(mode));
+  /*Serial.print("Mode: " + String(mode));
   Serial.print(" Step: " + String(step));
   Serial.print(" eye_color: " + String(eye_color));
   Serial.print(" eye_blink: " + String(eye_blink));
   Serial.print(" pup_index: " + String(pup_index));
-  Serial.println("");
+  Serial.println("");*/
 }
 
 void changeMode() {
   //Serial.println("Button pressed");
-  if( (mode >= SPECTRUM0) && (mode < SPECTRUM5) ) mode++;
-  else mode = SPECTRUM0;
-  buttonPushCounter = mode - 50;
+  if( (mode >= SPECTRUM0) && (mode < MAXMODE) ) mode++;
+  else{ 
+    mode = SPECTRUM0;
+    holdWifi();
+  }
+  if(mode > SPECTRUM5) restartWifi();
 }
 
 void startAutoMode() {
@@ -831,7 +861,6 @@ void brightnessButton() {
 
 void setup() {
   Serial.begin(115200);
-  //SerialBT.begin("ESP32test"); //Bluetooth device name
   pinMode(BUILTIN_LED, OUTPUT);
   digitalWrite(BUILTIN_LED, LED_ON);
 
@@ -887,18 +916,20 @@ void setup() {
 
 void loop() {
 
-  if( (mode < SPECTRUM0) || (mode > SPECTRUM5) ){
-
-    ArduinoOTA.handle();
-
-    if (!client.connected()) {
-            reconnect();
-    }
-    if(!client.loop())
-        client.connect(MQTT_CLIENT);
-  }
-
   modeBtn.read();
+
+  if( (mode < SPECTRUM0) || (mode > SPECTRUM5) ){
+    if(WiFi.status() == WL_CONNECTED){
+  
+      ArduinoOTA.handle();
+      
+      if (!client.connected()) {
+        reconnect();
+      }
+      if(!client.loop())
+        client.connect(MQTT_CLIENT);
+    }
+  }
 
   /* Process loop */
   //Serial.print(mode);Serial.print(" -- ");Serial.println(step);
@@ -913,10 +944,6 @@ void loop() {
     processScrollingText();
   }
   else if( (mode >= SPECTRUM0) && (mode <= SPECTRUM5) ){
-    // turn off wifi
-    WiFi.disconnect();
-    WiFi.mode(WIFI_OFF);
-
     processSpectrum();
     //MeasureAnalog();
     //MeasureDirect();
@@ -925,7 +952,6 @@ void loop() {
     processEyes();
   }
   else if(mode == FIRE){
-    //Fire2018_2();
     random16_add_entropy( random(10) ); // We chew a lot of entropy
     Fireplace();
     FastLED.show();
@@ -934,7 +960,9 @@ void loop() {
   else{
     //Serial.print(mode);Serial.print(" -- ");Serial.println(step);
     if( (mode < SPECTRUM0) || (mode > SPECTRUM5) ){
-      nonBlockingDelay(100);
+      if(WiFi.status() == WL_CONNECTED){ 
+        nonBlockingDelay(100);
+      }
     }
   }
 }
@@ -997,7 +1025,7 @@ void MeasureDirect()
 
 void processSpectrum(){
   // Don't clear screen if waterfall pattern, be sure to change this is you change the patterns / order
-  if(buttonPushCounter != 5) FastLED.clear();
+  if(mode != SPECTRUM5) FastLED.clear();
 
   // Reset bandValues[]
   for (int i = 0; i<NUM_BANDS; i++){
@@ -1061,45 +1089,45 @@ void processSpectrum(){
     }
 
     // Draw bars
-    switch (buttonPushCounter) {
-      case 0:
+    switch (mode) {
+      case SPECTRUM0:
         rainbowBars(band, barHeight);
         break;
-      case 1:
+      case SPECTRUM1:
         // No bars on this one
         break;
-      case 2:
+      case SPECTRUM2:
         purpleBars(band, barHeight);
         break;
-      case 3:
+      case SPECTRUM3:
         centerBars(band, barHeight);
         break;
-      case 4:
+      case SPECTRUM4:
         changingBars(band, barHeight);
         break;
-      case 5:
+      case SPECTRUM5:
         waterfall(band);
         break;
     }
 
     // Draw peaks
-    switch (buttonPushCounter) {
-      case 0:
+    switch (mode) {
+      case SPECTRUM0:
         whitePeak(band);
         break;
-      case 1:
+      case SPECTRUM1:
         outrunPeak(band);
         break;
-      case 2:
+      case SPECTRUM2:
         whitePeak(band);
         break;
-      case 3:
+      case SPECTRUM3:
         // No peaks
         break;
-      case 4:
+      case SPECTRUM4:
         // No peaks
         break;
-      case 5:
+      case SPECTRUM5:
         // No peaks
         break;
     }
@@ -1118,10 +1146,6 @@ void processSpectrum(){
   // Used in some of the patterns
   EVERY_N_MILLISECONDS(10) {
     colorTimer++;
-  }
-
-  EVERY_N_SECONDS(10) {
-    if (autoChangePatterns) buttonPushCounter = (buttonPushCounter + 1) % 6;
   }
 
   FastLED.show();
