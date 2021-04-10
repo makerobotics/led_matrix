@@ -1,3 +1,45 @@
+static const uint8_t pupils_L[][2] = {
+  {2,4}, // 0 - centre
+  {1,4}, // 1 - right
+  {3,4}, // 2 - left
+  {2,5}, // 3 - bottom right
+  {3,5}, // 4 - bottom left
+  {3,3}, // 5 - GREEN centre
+  {1,3}, // 6 - GREEN left
+  {2,3}, // 7
+  {4,3}, // 8
+  {5,3}, // 9 - GREEN right
+  {2,4}, // 10 - GREEN top left
+  {3,4}, // 11
+  {4,4}, // 12 - GREEN top right
+  {3,5}, // 13 - GREEN top
+  {2,2}, // 14
+  {3,2}, // 15
+  {4,2}, // 16
+  {3,1}  // 17 - GREEN bottom
+};
+
+static const uint8_t pupils_R[][2] = {
+  {4,4}, // 0 - centre
+  {3,4}, // 1 - right
+  {5,4}, // 2 - left
+  {3,5}, // 3 - bottom right
+  {4,5}, // 4 - bottom left
+  {3,3}, // 5 - GREEN centre
+  {1,3}, // 6 - GREEN left
+  {2,3}, // 7
+  {4,3}, // 8
+  {5,3}, // 9 - GREEN right
+  {2,4}, // 10 - GREEN top left
+  {3,4}, // 11
+  {4,4}, // 12 - GREEN top right
+  {3,5}, // 13 - GREEN top
+  {2,2}, // 14
+  {3,2}, // 15
+  {4,2}, // 16
+  {3,1}  // 17 - GREEN bottom
+};
+
 //static const uint8_t PROGMEM // Bitmaps are stored in program memory
 static const uint8_t blinkImg[][8] = {    // Eye animation frames
     // The NICE (green) eye, both left and right
