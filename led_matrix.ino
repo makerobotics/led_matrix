@@ -4,15 +4,11 @@
 
 #define CPU_ESP8266 1
 #define CPU_ESP32   2
-
-#if SIDE == LEFT
-  #define CPU     CPU_ESP32
-#else
-  #define CPU     CPU_ESP8266
-#endif
+#define CPU     CPU_ESP32
 
 #include <arduinoFFT.h>
 #include <ArduinoJson.h>
+#include <EasyButton.h>
 #include <FastLED.h>
 #if CPU == CPU_ESP32
   #include <WiFi.h>
@@ -32,7 +28,7 @@
   #define IP                216
   #define MQTT_CLIENT       "ESPClient_LED_L"
 #else
-  #define IP                215
+  #define IP                217
   #define MQTT_CLIENT       "ESPClient_LED_R"
 #endif
 #define LED_MATRIX        "global/led"
@@ -42,23 +38,17 @@
   #define LED_OFF           LOW
   #define MAX_FRAMES        32
   #define DATA_PIN          22
-#else
-  #define LED_ON            LOW
-  #define LED_OFF           HIGH
-  #define BUILTIN_LED       2 // Wemos D1 mini
-  #define MAX_FRAMES        20
-  #define DATA_PIN          5
+  #define BTN_PIN           16
 #endif
 #define SAMPLES           1024          // Must be a power of 2
 #define SAMPLING_FREQ     40000         // Hz, must be 40000 or less due to ADC conversion time. Determines maximum frequency that can be analysed by the FFT Fmax=sampleF/2.
-#define AMPLITUDE         1000          // Depending on your audio source level, you may need to alter this value. Can be used as a 'sensitivity' control.
+#define AMPLITUDE         10000         // Depending on your audio source level, you may need to alter this value. Can be used as a 'sensitivity' control.
 #define AUDIO_IN_PIN      36            // Signal in on this pin
 #define MAX_MILLIAMPS     2000          // Careful with the amount of power here if running off USB port
 const int BRIGHTNESS_SETTINGS[3] = {5, 70, 200};  // 3 Integer array for 3 brightness settings (based on pressing+holding BTN_PIN)
 #define LED_VOLTS         5             // Usually 5 or 12
 #define NUM_BANDS         8             // To change this, you will need to change the bunch of if statements describing the mapping from bins to bands
-#define NOISE             700           // Used as a crude noise filter, values below this are ignored
-
+#define NOISE             6000          // Used as a crude noise filter, values below this are ignored
 #define BAR_WIDTH         (kMatrixWidth  / (NUM_BANDS - 1))  // If width >= 8 light 1 LED width per bar, >= 16 light 2 LEDs width bar etc
 #define TOP               (kMatrixHeight - 0)  // Don't allow the bars to go offscreen
 
@@ -79,8 +69,8 @@ const int BRIGHTNESS_SETTINGS[3] = {5, 70, 200};  // 3 Integer array for 3 brigh
 
 #define FRAME_WIDTH       8
 #define FRAME_HEIGHT      8
-#define NUM_LEDS          FRAME_WIDTH*FRAME_HEIGHT //64
-#define COLOR_ORDER       GRB //BRG
+#define NUM_LEDS          FRAME_WIDTH*FRAME_HEIGHT
+#define COLOR_ORDER       GRB
 #define CHIPSET           WS2812B
 #define BRIGHTNESS        255
 
@@ -115,12 +105,11 @@ const int BRIGHTNESS_SETTINGS[3] = {5, 70, 200};  // 3 Integer array for 3 brigh
 #define FPS_DELAY 1000/FPS
 /* Rate of cooling. Play with to change fire from
    roaring (smaller values) to weak (larger values) */
-#define COOLING 55  
-
+#define COOLING 55
 /* How hot is "hot"? Increase for brighter fire */
 #define HOT 180
 #define MAXHOT HOT*FRAME_HEIGHT
-        
+
 struct Color{
   int r, g, b;
 };
@@ -157,9 +146,17 @@ int pixStackIndex = 0;
 int sensorPin = A0;    // select the input pin for the micro
 int autocolor = 0;
 
+int debug = 0;
+
 int eye_color = GREEN;
 int eye_blink = 0;
-int pup_x = 2, pup_y = 4;
+int pup_index = 0;
+int last_pup_index = 0;
+
+// Button stuff
+int buttonPushCounter = 0;
+bool autoChangePatterns = false;
+EasyButton modeBtn(BTN_PIN);
 
 // Sampling and FFT stuff
 unsigned int sampling_period_us;
@@ -170,10 +167,6 @@ double vReal[SAMPLES];
 double vImag[SAMPLES];
 unsigned long newTime;
 arduinoFFT FFT = arduinoFFT(vReal, vImag, SAMPLES, SAMPLING_FREQ);
-
-// Button stuff
-int buttonPushCounter = 0;
-bool autoChangePatterns = false;
 
 // Initializes the espClient. You should change the espClient name if you have multiple ESPs running in your home automation system
 WiFiClient espClient;
@@ -224,7 +217,7 @@ const bool    kMatrixVertical = false;
 uint16_t XY( uint8_t x, uint8_t y)
 {
   uint16_t i;
-  
+
   if( kMatrixSerpentineLayout == false) {
     if (kMatrixVertical == false) {
       i = (y * kMatrixWidth) + x;
@@ -251,14 +244,14 @@ uint16_t XY( uint8_t x, uint8_t y)
       }
     }
   }
-  
+
   return i;
 }
 
 // XY code for serpentine matrix with input in top left
 uint16_t XY_2( uint8_t x, uint8_t y) {
   uint16_t i;
-  
+
   y = kMatrixHeight - 1 - y;  // Adjust y coordinate so (0,0) is bottom left
 
   if( kMatrixSerpentineLayout == false) {
@@ -302,7 +295,7 @@ void nonBlockingDelay(int mydelay){
   }
 }
 
-// Don't change the function below. This functions connects your ESP8266 to your router
+// This functions connects your ESP8266 to your router
 int setup_wifi() {
     int res = false;
     int count = 0;
@@ -315,7 +308,6 @@ int setup_wifi() {
     Serial.print("Connecting to ");
     delay(10);
     Serial.println(ssid);
-    //WiFi.setSleepMode(WIFI_NONE_SLEEP);
     WiFi.mode(WIFI_STA);
     WiFi.begin(ssid, password);
 
@@ -368,30 +360,28 @@ void reconnect() {
 
 // This functions is executed when some device publishes a message to a topic that your ESP8266 is subscribed to
 void callback(String topic, byte* message, unsigned int length) {
-  Serial.print("Message arrived on topic: ");
-  Serial.print(topic);
-  Serial.print(". Message: ");
+  //Serial.print("Message arrived on topic: ");
+  //Serial.print(topic);
+  //Serial.print(". Message: ");
   String payload;
 
   for (unsigned int i = 0; i < length; i++) {
-      Serial.print((char)message[i]);
+      //Serial.print((char)message[i]);
       payload += (char)message[i];
   }
-  
-  Serial.println();
+
+  //Serial.println();
   /* example: CLR*/
   /* example: SHOW*/
   /* example: SET,0,0,255,255,255 [x, y, R, G, B]*/
   if (topic == LED_MATRIX){
     //Serial.println("topic == LED_MATRIX");
     if(payload == "CLR"){
-      //clearMatrix();
       FastLED.clear ();
       //Serial.println("Clear matrix");
       mode = PICTURE;
     }
     else if (payload == "SHOW") {
-      //showMatrix();
       FastLED.show();
       //Serial.println("Show");
       mode = PICTURE;
@@ -436,15 +426,18 @@ void callback(String topic, byte* message, unsigned int length) {
       eye_color = GREEN;
     }
     else if (payload.startsWith("PUPIL")){
-      pup_x = split(payload, ',', 1).toInt();
-      pup_y = split(payload, ',', 2).toInt();
+      pup_index = split(payload, ',', 1).toInt();
+      //Serial.print("pup index: ");Serial.println(pup_index);
     }
-    else if (payload.startsWith("SET")){
+    else if (payload.startsWith("DEBUG")){
+      debug = split(payload, ',', 1).toInt();
+      Serial.print("debug: ");Serial.println(debug);
+    }else if (payload.startsWith("SET")){
       //Serial.println("SET pixel");
       mode = PICTURE;
       int x = split(payload, ',', 1).toInt();
       int y = split(payload, ',', 2).toInt();
-      
+
       int col_r = split(payload, ',', 3).toInt();
       //Serial.println(col_r);
       int col_g = split(payload, ',', 4).toInt();
@@ -461,7 +454,7 @@ void callback(String topic, byte* message, unsigned int length) {
       step = LOAD;
       DynamicJsonDocument doc(200);
       DeserializationError error = deserializeJson(doc, payload);
-    
+
       // Test if parsing succeeds.
       if (error) {
         Serial.print(F("deserializeJson() failed: "));
@@ -475,12 +468,12 @@ void callback(String topic, byte* message, unsigned int length) {
       textframe.fgColor.r = split(doc[TEXTFG].as<String>(),',',0).toInt();
       textframe.fgColor.g = split(doc[TEXTFG].as<String>(),',',1).toInt();
       textframe.fgColor.b = split(doc[TEXTFG].as<String>(),',',2).toInt();
-      
+
       textframe.delay = doc[TEXTDELAY].as<int>();
       if( (textframe.fgColor.r == 0) && (textframe.fgColor.g == 0) && (textframe.fgColor.b == 0) ){
         autocolor = 1;
       }
-      
+
       //Serial.print("Frame count: ");Serial.println(Sequence.nb_frames);
     }
     else if(payload.indexOf(SEQ_DEF) > 0){
@@ -489,7 +482,7 @@ void callback(String topic, byte* message, unsigned int length) {
       step = LOAD;
       DynamicJsonDocument doc(200);
       DeserializationError error = deserializeJson(doc, payload);
-    
+
       // Test if parsing succeeds.
       if (error) {
         //Serial.print(F("deserializeJson() failed: "));
@@ -503,7 +496,7 @@ void callback(String topic, byte* message, unsigned int length) {
       Serial.println("Received FrameDef");
       DynamicJsonDocument doc(250);
       DeserializationError error = deserializeJson(doc, payload);
-    
+
       // Test if parsing succeeds.
       if (error) {
         //Serial.print(F("deserializeJson() failed: "));
@@ -522,7 +515,7 @@ void callback(String topic, byte* message, unsigned int length) {
       Serial.println("Received PixDef");
       DynamicJsonDocument doc(250);
       DeserializationError error = deserializeJson(doc, payload);
-    
+
       // Test if parsing succeeds.
       if (error) {
         //Serial.print(F("deserializeJson() failed: "));
@@ -533,7 +526,7 @@ void callback(String topic, byte* message, unsigned int length) {
       int fi = doc[FRAME_INDEX].as<int>();
 //      //Serial.print("Pos index: ");Serial.println(pos);
       //Serial.print("F index: ");Serial.println(fi);
-      
+
       Sequence.frames[fi].pixels[pixStackIndex].x = doc["X"].as<int>();
       Sequence.frames[doc[FRAME_INDEX].as<int>()].pixels[pixStackIndex].y = doc["Y"].as<int>();
       Sequence.frames[doc[FRAME_INDEX].as<int>()].pixels[pixStackIndex].r = doc["R"].as<int>();
@@ -649,7 +642,7 @@ void processText(){
 void processScrollingText(){
   //Serial.println("Scroll");
   if(textframe.delay == 0) textframe.delay = 200;
-  
+
   // for each character (last excluded due to sliding logic)
   for (int i=0;i<textframe.text.length()-1;i++){
     // scroll 8 times
@@ -692,7 +685,9 @@ void processScrollingText(){
 }
 
 /* Set prerecorded frame and wait */
-void setFrame(int index, int delay, Color col, int pupille_x, int pupille_y){
+void setFrame(int index, int delay, Color col) {
+int pupille_x = 2;
+int pupille_y = 2;
   FastLED.clear();
   for(int i=0;i<8;i++){
     for(int j=0;j<8;j++){
@@ -700,6 +695,15 @@ void setFrame(int index, int delay, Color col, int pupille_x, int pupille_y){
         leds[ XY(i, j)] = CRGB(col.r, col.g, col.b);
     }
   }
+  //Serial.println("SET frame");
+  //Serial.print(pup_index);Serial.print(" ");Serial.print(pupils_R[pup_index][0]);Serial.println(pupils_R[pup_index][1]);
+#if SIDE == LEFT
+  pupille_x = pupils_L[pup_index][0];
+  pupille_y = pupils_L[pup_index][1];
+#else
+  pupille_x = pupils_R[pup_index][0];
+  pupille_y = pupils_R[pup_index][1];
+#endif
   // Pupille
   leds[ XY(pupille_x,   pupille_y)] = CRGB(0, 0, 0);
   leds[ XY(pupille_x,   pupille_y+1)] = CRGB(0, 0, 0);
@@ -708,44 +712,6 @@ void setFrame(int index, int delay, Color col, int pupille_x, int pupille_y){
   FastLED.show();
   nonBlockingDelay(delay);
 }
-
-/*
-// Autonomous eye management (overridden by MQTT commands)
-void processRandomEyes(){
-  static int blink_timer = 0;
-  static unsigned long lastBlinkCall = millis();
-  static int switch_timer = 0;
-  static unsigned long lastSwitchCall = millis();
-
-  if(millis() > lastBlinkCall + blink_timer){
-    blink_timer = random(1, 5)*1000;
-    lastBlinkCall = millis();
-    // start blink here
-    eye_blink = 1;
-  }
-  else if(millis() > lastSwitchCall + switch_timer){
-    switch_timer = random(10, 20)*1000;
-    lastSwitchCall = millis();
-    // switch color
-    if(eye_color == GREEN) eye_color = RED;
-    else eye_color = GREEN;
-  }
-}
-*/
-
-/*
-void processPupil(int *p_x, int *p_y){
-  static unsigned long lastPupilCall = millis();
-  static int pupil_timer = 0;
-
-  if(millis() > lastPupilCall + pupil_timer){
-    pupil_timer = random(1, 5)*1000;
-    lastPupilCall = millis();
-    if(*p_x == 2) *p_x = 3;
-    else *p_x = 2;
-  }
-}
-*/
 
 void processEyes(){
   static int last_eye_color = RED;
@@ -757,31 +723,28 @@ void processEyes(){
 #endif
   Color gc = {0, 255, 0};
   Color rc = {255, 0, 0};
-  
-//  processRandomEyes();
-//  processPupil(&pup_x, &pup_y);
 
   // Blink green eye
   if( (eye_blink == 1) && (eye_color == GREEN) ){
     // Blink green eye
-    for(int frame=0;frame < sizeof(greenBlinkIndex)/sizeof(greenBlinkIndex[0]);frame++){    
-      setFrame(greenBlinkIndex[frame], 50, gc, pup_x, pup_y);
+    for(int frame=0;frame < sizeof(greenBlinkIndex)/sizeof(greenBlinkIndex[0]);frame++){
+      setFrame(greenBlinkIndex[frame], 50, gc);
     }
     // Green eye open
-    setFrame(0, 1, gc, pup_x, pup_y);
+    setFrame(0, 1, gc);
     eye_blink = 0;
   }
   // Blink red eye
   else if( (eye_blink == 1) && (eye_color == RED) ){
     // Blink red eye
-    for(int frame=0;frame < sizeof(redBlinkIndex)/sizeof(redBlinkIndex[0]);frame++){    
-      setFrame(redBlinkIndex[frame], 50, rc, pup_x, pup_y);
+    for(int frame=0;frame < sizeof(redBlinkIndex)/sizeof(redBlinkIndex[0]);frame++){
+      setFrame(redBlinkIndex[frame], 50, rc);
     }
     // Red eye open
 #if SIDE == LEFT
-    setFrame(10, 1, rc, pup_x, pup_y);
+    setFrame(10, 1, rc);
 #else
-    setFrame(5, 1, rc, pup_x, pup_y);
+    setFrame(5, 1, rc);
 #endif
     eye_blink = 0;
   }
@@ -791,50 +754,93 @@ void processEyes(){
     if(eye_color == GREEN){
       // Close red eye
 #if SIDE == LEFT
-      for(int frame=10;frame>=14;frame++){    
+      for(int frame=10;frame>=14;frame++){
 #else
-      for(int frame=5;frame>=8;frame++){    
+      for(int frame=5;frame>=8;frame++){
 #endif
-        setFrame(frame, 50, rc, pup_x, pup_y);
+        setFrame(frame, 50, rc);
       }
       // Open green eye
-      for(int frame=4;frame >= 1;frame--){    
-        setFrame(frame, 50, gc, pup_x, pup_y);
+      for(int frame=4;frame >= 1;frame--){
+        setFrame(frame, 50, gc);
       }
       // Green eye open
-      setFrame(0, 1, gc, pup_x, pup_y);
+      setFrame(0, 1, gc);
     }
     // blink from green to red
     else{
       // Close green eye
-      for(int frame=1;frame <= 4;frame++){    
-        setFrame(frame, 50, gc, pup_x, pup_y);
+      for(int frame=1;frame <= 4;frame++){
+        setFrame(frame, 50, gc);
       }
       // Open red eye
 #if SIDE == LEFT
-      for(int frame=14;frame >10;frame--){    
+      for(int frame=14;frame >10;frame--){
 #else
-      for(int frame=8;frame >5;frame--){    
+      for(int frame=8;frame >5;frame--){
 #endif
-        setFrame(frame, 50, rc, pup_x, pup_y);
+        setFrame(frame, 50, rc);
       }
       // Red eye open
 #if SIDE == LEFT
-      setFrame(10, 1, rc, pup_x, pup_y);
+      setFrame(10, 1, rc);
 #else
-      setFrame(5, 1, rc, pup_x, pup_y);
+      setFrame(5, 1, rc);
 #endif
     }
   }
-
+  // else change pupil position if necessary
+  else{
+    if(last_pup_index != pup_index){
+      if(eye_color == GREEN){
+        // Green eye open
+        setFrame(0, 1, gc);
+      }
+      else{
+#if SIDE == LEFT
+        setFrame(10, 1, rc);
+#else
+        setFrame(5, 1, rc);
+#endif
+      }
+      last_pup_index = pup_index;
+    }
+  }
   last_eye_color = eye_color;
+
+  Serial.print("Mode: " + String(mode));
+  Serial.print(" Step: " + String(step));
+  Serial.print(" eye_color: " + String(eye_color));
+  Serial.print(" eye_blink: " + String(eye_blink));
+  Serial.print(" pup_index: " + String(pup_index));
+  Serial.println("");
 }
 
-void setup() { 
+void changeMode() {
+  //Serial.println("Button pressed");
+  if( (mode >= SPECTRUM0) && (mode < SPECTRUM5) ) mode++;
+  else mode = SPECTRUM0;
+  buttonPushCounter = mode - 50;
+}
+
+void startAutoMode() {
+}
+
+void brightnessButton() {
+}
+
+void setup() {
   Serial.begin(115200);
+  //SerialBT.begin("ESP32test"); //Bluetooth device name
   pinMode(BUILTIN_LED, OUTPUT);
   digitalWrite(BUILTIN_LED, LED_ON);
-  
+
+  modeBtn.begin();
+  modeBtn.onPressed(changeMode);
+//  modeBtn.onPressedFor(LONG_PRESS_MS, brightnessButton);
+//  modeBtn.onSequence(3, 2000, startAutoMode);
+//  modeBtn.onSequence(5, 2000, brightnessOff);
+
   if(!setup_wifi()){
     Serial.println("Reset due to missing wifi connection");
     ESP.restart();
@@ -880,13 +886,19 @@ void setup() {
 }
 
 void loop() {
-  ArduinoOTA.handle();
 
-  if (!client.connected()) {
-          reconnect();
+  if( (mode < SPECTRUM0) || (mode > SPECTRUM5) ){
+
+    ArduinoOTA.handle();
+
+    if (!client.connected()) {
+            reconnect();
+    }
+    if(!client.loop())
+        client.connect(MQTT_CLIENT);
   }
-  if(!client.loop())
-      client.connect(MQTT_CLIENT);
+
+  modeBtn.read();
 
   /* Process loop */
   //Serial.print(mode);Serial.print(" -- ");Serial.println(step);
@@ -900,9 +912,15 @@ void loop() {
   else if (mode == TEXTMODESCROLL){
     processScrollingText();
   }
-  /*else if( (mode >= SPECTRUM0) && (mode <= SPECTRUM5) ){
-    //processSpectrum();
-  }*/
+  else if( (mode >= SPECTRUM0) && (mode <= SPECTRUM5) ){
+    // turn off wifi
+    WiFi.disconnect();
+    WiFi.mode(WIFI_OFF);
+
+    processSpectrum();
+    //MeasureAnalog();
+    //MeasureDirect();
+  }
   else if (mode == EYE){
     processEyes();
   }
@@ -915,7 +933,9 @@ void loop() {
   }
   else{
     //Serial.print(mode);Serial.print(" -- ");Serial.println(step);
-    nonBlockingDelay(100);
+    if( (mode < SPECTRUM0) || (mode > SPECTRUM5) ){
+      nonBlockingDelay(100);
+    }
   }
 }
 
@@ -934,6 +954,47 @@ void setBin(int value){
   client.publish(STATUS, String(maxval).c_str());
 }
 
+long min(long a, long b){
+  if(a<b) return a;
+  else return b;
+}
+
+long max(long a, long b){
+  if(a>b) return a;
+  else return b;
+}
+
+void MeasureAnalog()
+{
+#define MicSamples (1024*2)
+
+    long signalAvg = 0, signalMax = 0, signalMin = 1024, t0 = millis();
+    for (int i = 0; i < MicSamples; i++)
+    {
+        int k = analogRead(AUDIO_IN_PIN);
+        signalMin = min(signalMin, k);
+        signalMax = max(signalMax, k);
+        signalAvg += k;
+    }
+    signalAvg /= MicSamples;
+
+    // print
+    Serial.print("Time: " + String(millis() - t0));
+    Serial.print(" Min: " + String(signalMin));
+    Serial.print(" Max: " + String(signalMax));
+    Serial.print(" Avg: " + String(signalAvg));
+    Serial.print(" Span: " + String(signalMax - signalMin));
+    Serial.print(", " + String(signalMax - signalAvg));
+    Serial.print(", " + String(signalAvg - signalMin));
+    Serial.println("");
+}
+
+void MeasureDirect()
+{
+  int k = analogRead(AUDIO_IN_PIN);
+  Serial.println("Val: " + String(k));
+}
+
 void processSpectrum(){
   // Don't clear screen if waterfall pattern, be sure to change this is you change the patterns / order
   if(buttonPushCounter != 5) FastLED.clear();
@@ -947,8 +1008,14 @@ void processSpectrum(){
   for (int i = 0; i < SAMPLES; i++) {
     newTime = micros();
     vReal[i] = analogRead(AUDIO_IN_PIN); // A conversion takes about 9.7uS on an ESP32
+    //Serial.println("Val: " + String(vReal[i]));
     vImag[i] = 0;
     while ((micros() - newTime) < sampling_period_us) { /* chill */ }
+  }
+  if(debug){
+    for (int i = 0; i < SAMPLES; i++) {
+      Serial.println(vReal[i]);
+    }
   }
 
   // Compute FFT
@@ -960,7 +1027,7 @@ void processSpectrum(){
   // Analyse FFT results
   for (int i = 2; i < (SAMPLES/2); i++){       // Don't use sample 0 and only first SAMPLES/2 are usable. Each array element represents a frequency bin and its value the amplitude.
     if (vReal[i] > NOISE) {                    // Add a crude noise filter
-      
+
     // 8 bands, 12kHz top band
       if (i<=3 )           bandValues[0]  += (int)vReal[i];
       if (i>3   && i<=6  ) bandValues[1]  += (int)vReal[i];
@@ -970,35 +1037,20 @@ void processSpectrum(){
       if (i>55  && i<=112) bandValues[5]  += (int)vReal[i];
       if (i>112 && i<=229) bandValues[6]  += (int)vReal[i];
       if (i>229          ) bandValues[7]  += (int)vReal[i];
-
-    /*16 bands, 12kHz top band
-      if (i<=2 )           bandValues[0]  += (int)vReal[i];
-      if (i>2   && i<=3  ) bandValues[1]  += (int)vReal[i];
-      if (i>3   && i<=5  ) bandValues[2]  += (int)vReal[i];
-      if (i>5   && i<=7  ) bandValues[3]  += (int)vReal[i];
-      if (i>7   && i<=9  ) bandValues[4]  += (int)vReal[i];
-      if (i>9   && i<=13 ) bandValues[5]  += (int)vReal[i];
-      if (i>13  && i<=18 ) bandValues[6]  += (int)vReal[i];
-      if (i>18  && i<=25 ) bandValues[7]  += (int)vReal[i];
-      if (i>25  && i<=36 ) bandValues[8]  += (int)vReal[i];
-      if (i>36  && i<=50 ) bandValues[9]  += (int)vReal[i];
-      if (i>50  && i<=69 ) bandValues[10] += (int)vReal[i];
-      
-      if (i>69  && i<=97 ) bandValues[11] += (int)vReal[i];
-      if (i>97  && i<=135) bandValues[12] += (int)vReal[i];
-      if (i>135 && i<=189) bandValues[13] += (int)vReal[i];
-      if (i>189 && i<=264) bandValues[14] += (int)vReal[i];
-      if (i>264          ) bandValues[15] += (int)vReal[i]; */
     }
   }
 
   // Process the FFT data into bar heights
   for (byte band = 0; band < NUM_BANDS; band++) {
-    
+
     // Scale the bars for the display
     int barHeight = bandValues[band] / AMPLITUDE;
     if (barHeight > TOP) barHeight = TOP;
-    //Serial.print("Band ");Serial.print(band);Serial.print(" - Val: ");Serial.println(barHeight);
+    //Serial.print("Band ");Serial.print(band);Serial.print(",Val: ");Serial.println(barHeight);
+    //Serial.print("Band");Serial.print(band);Serial.print(":");Serial.print(bandValues[band]);
+    //if(band<7) Serial.print(",");
+    //else Serial.println();
+    //Serial.println();
 
     // Small amount of averaging between frames
     barHeight = ((oldBarHeights[band] * 1) + barHeight) / 2;
@@ -1007,7 +1059,7 @@ void processSpectrum(){
     if (barHeight > peak[band]) {
       peak[band] = min(TOP, barHeight);
     }
-    
+
     // Draw bars
     switch (buttonPushCounter) {
       case 0:
@@ -1055,10 +1107,10 @@ void processSpectrum(){
     // Save oldBarHeights for averaging later
     oldBarHeights[band] = barHeight;
   }
-  
+
   // Decay peak
   EVERY_N_MILLISECONDS(60) {
-    for (byte band = 0; band < NUM_BANDS; band++) 
+    for (byte band = 0; band < NUM_BANDS; band++)
       if (peak[band] > 0) peak[band] -= 1;
     colorTimer++;
   }
@@ -1071,7 +1123,7 @@ void processSpectrum(){
   EVERY_N_SECONDS(10) {
     if (autoChangePatterns) buttonPushCounter = (buttonPushCounter + 1) % 6;
   }
-  
+
   FastLED.show();
 }
 
@@ -1081,7 +1133,7 @@ void rainbowBars(int band, int barHeight) {
   int xStart = BAR_WIDTH * band;
   for (int x = xStart; x < xStart + BAR_WIDTH; x++) {
     for (int y = 0; y < barHeight; y++) {
-      leds[XY_2(x,y)] = CHSV((x / BAR_WIDTH) * (255 / NUM_BANDS), 255, 255); 
+      leds[XY_2(x,y)] = CHSV((x / BAR_WIDTH) * (255 / NUM_BANDS), 255, 255);
     }
   }
 }
@@ -1099,7 +1151,7 @@ void changingBars(int band, int barHeight) {
   int xStart = BAR_WIDTH * band;
   for (int x = xStart; x < xStart + BAR_WIDTH; x++) {
     for (int y = 0; y < barHeight; y++) {
-      leds[XY_2(x,y)] = CHSV(y * (255 / kMatrixHeight) + colorTimer, 255, 255); 
+      leds[XY_2(x,y)] = CHSV(y * (255 / kMatrixHeight) + colorTimer, 255, 255);
     }
   }
 }
@@ -1156,7 +1208,7 @@ void waterfall(int band) {
 void Fireplace () {
   static unsigned int spark[FRAME_WIDTH]; // base heat
   CRGB stack[FRAME_WIDTH][FRAME_HEIGHT];        // stacks that are cooler
- 
+
   // 1. Generate sparks to re-heat
   for( int i = 0; i < FRAME_WIDTH; i++) {
     if (spark[i] < HOT ) {
@@ -1164,12 +1216,12 @@ void Fireplace () {
       spark[i] = random16( base, MAXHOT );
     }
   }
-  
+
   // 2. Cool all the sparks
   for( int i = 0; i < FRAME_WIDTH; i++) {
     spark[i] = qsub8( spark[i], random8(0, COOLING) );
   }
-  
+
   // 3. Build the stack
   /*    This works on the idea that pixels are "cooler"
         as they get further from the spark at the bottom */
@@ -1180,21 +1232,21 @@ void Fireplace () {
          pixel is */
       byte index = constrain(heat, 0, HOT);
       stack[i][j] = ColorFromPalette( gPal, index );
-      
+
       /* The next higher pixel will be "cooler", so calculate
          the drop */
       unsigned int drop = random8(0,HOT);
       if (drop > heat) heat = 0; // avoid wrap-arounds from going "negative"
       else heat -= drop;
- 
+
       heat = constrain(heat, 0, MAXHOT);
     }
   }
-  
+
   // 4. map stacks to led array
   for( int i = 0; i < FRAME_WIDTH; i++) {
-  for( int j = 0; j < FRAME_HEIGHT; j++) {
-     leds[(j*FRAME_WIDTH) + i] = stack[i][j];
+    for( int j = 0; j < FRAME_HEIGHT; j++) {
+      leds[(j*FRAME_WIDTH) + i] = stack[i][j];
+    }
   }
-  }  
 }
