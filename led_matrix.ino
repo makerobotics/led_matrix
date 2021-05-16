@@ -215,19 +215,24 @@ void reconnect() {
 
 // This functions is executed when some device publishes a message to a topic that your ESP8266 is subscribed to
 void callback(String topic, byte* message, unsigned int length) {
-  Serial.print("Message arrived on topic: ");
-  Serial.print(topic);
-  Serial.print(". Message: ");
   String payload;
-
+  
   lastReceivedMessage = millis();
-
   for (unsigned int i = 0; i < length; i++) {
-      Serial.print((char)message[i]);
       payload += (char)message[i];
   }
 
+#if 0
+  Serial.print("Message arrived on topic: ");
+  Serial.print(topic);
+  Serial.print(". Message: ");
+    
+  for (unsigned int i = 0; i < length; i++) {
+      Serial.print((char)message[i]);
+  }
   Serial.println();
+#endif
+  
   /* example: CLR*/
   /* example: SHOW*/
   /* example: SET,0,0,255,255,255 [x, y, R, G, B]*/
