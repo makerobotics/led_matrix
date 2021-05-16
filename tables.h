@@ -1,3 +1,6 @@
+#ifndef _TABLES
+#define _TABLES
+
 static const uint8_t pupils_L[][2] = {
   {2,4}, // 0 - centre
   {1,4}, // 1 - right
@@ -266,3 +269,5 @@ const uint8_t Font[] = {
   0x00, 0x00, 0x48, 0xb0, 0x00, 0x00, 0x00,  // Code for char ~
   0x70, 0x50, 0x50, 0x50, 0x50, 0x50, 0x70   // Code for char 
 };
+
+#endif
