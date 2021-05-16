@@ -1,14 +1,6 @@
 #ifndef _MAIN
 #define _MAIN
 
-#define LEFT    1
-#define RIGHT   2
-#define SIDE    RIGHT
-
-#define CPU_ESP8266 1
-#define CPU_ESP32   2
-#define CPU     CPU_ESP32
-
 #define BTN_PIN           16
 
 #include <arduinoFFT.h>

@@ -57,6 +57,7 @@ const int BRIGHTNESS_SETTINGS[3] = {5, 70, 200};  // 3 Integer array for 3 brigh
 #define FIRE              11
 #define MAXMODE           12 // to be updated as last mode number
 #define EYE               12
+#define countdown         13
 
 #define IDLE              0
 #define LOAD              1
